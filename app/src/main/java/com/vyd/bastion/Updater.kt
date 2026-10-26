@@ -40,25 +40,38 @@ object Updater {
     }
 
     suspend fun check(ctx: Context, force: Boolean = false) {
-        if (!force && System.currentTimeMillis() - lastCheck < 60 * 60 * 1000L) return
+        if (!force && System.currentTimeMillis() - lastCheck < 2 * 60 * 1000L) return
         if (state.value is State.Downloading) return
         lastCheck = System.currentTimeMillis()
         val local = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0"
+        var reached = false
         val result = withContext(Dispatchers.IO) {
             runCatching {
-                val c = URL("https://raw.githubusercontent.com/$REPO/main/update.json?t=${System.currentTimeMillis()}")
-                    .openConnection() as HttpURLConnection
-                c.useCaches = false
-                c.connectTimeout = 8000; c.readTimeout = 8000
-                if (c.responseCode != 200) return@runCatching null
-                val j = JSONObject(c.inputStream.bufferedReader().readText())
+                fun fetch(url: String, accept: String?): String? {
+                    val c = URL(url).openConnection() as HttpURLConnection
+                    c.useCaches = false
+                    c.setRequestProperty("Cache-Control", "no-cache")
+                    accept?.let { c.setRequestProperty("Accept", it) }
+                    c.connectTimeout = 8000; c.readTimeout = 8000
+                    return if (c.responseCode == 200) c.inputStream.bufferedReader().readText() else null
+                }
+                // GitHub API (fresh within ~60s), falling back to the raw file CDN.
+                val body = runCatching {
+                    fetch("https://api.github.com/repos/$REPO/contents/update.json?ref=main", "application/vnd.github.raw+json")
+                }.getOrNull() ?: fetch("https://raw.githubusercontent.com/$REPO/main/update.json?t=${System.currentTimeMillis()}", null)
+                    ?: return@runCatching null
+                reached = true
+                val j = JSONObject(body)
                 val ver = j.getString("version")
                 val apk = j.getString("apk")
                 if (newer(ver, local)) State.Available(ver, apk, j.optString("notes")) else null
             }.getOrNull()
         }
         if (result != null) state.value = result
-        else if (force) { state.value = State.Idle; toast(ctx, "You're on the latest version ($local)") }
+        else if (force) {
+            state.value = State.Idle
+            toast(ctx, if (reached) "You're on the latest version ($local)" else "Couldn't reach GitHub — check your connection")
+        }
     }
 
     private fun toast(ctx: Context, m: String) =

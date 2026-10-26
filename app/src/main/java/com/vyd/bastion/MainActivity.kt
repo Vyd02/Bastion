@@ -14,6 +14,7 @@ import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.vyd.bastion.ui.BastionTheme
 import com.vyd.bastion.ui.CrashScreen
 import com.vyd.bastion.ui.LauncherRoot
@@ -66,6 +67,16 @@ class MainActivity : FragmentActivity() {
             }
         }
 
+        // Keep checking for updates every 10 minutes while the launcher is on screen.
+        lifecycleScope.launch {
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+                while (true) {
+                    Updater.check(applicationContext)
+                    kotlinx.coroutines.delay(10 * 60 * 1000L)
+                }
+            }
+        }
+
         setContent { BastionTheme { LauncherRoot(vm) } }
     }
 
@@ -73,7 +84,6 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         if (!showingCrash) {
             vm.onResume()
-            lifecycleScope.launch { Updater.check(applicationContext) }
         }
     }
 

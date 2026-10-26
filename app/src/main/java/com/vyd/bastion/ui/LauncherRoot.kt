@@ -382,16 +382,7 @@ private fun HomeGrid(
         val cw = maxWidth / cols
         val ch = maxHeight / rows
         val hover = if (drag.active) drag.hoverSlot() else null
-        val anyApps = (0 until cells).any { s.layout[it]?.let(byKey::get) != null }
 
-        if (!anyApps && !drag.active) {
-            Text(
-                "Hold an app in your drawer, then drag it up here",
-                color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, textAlign = TextAlign.Center,
-                style = TextStyle(shadow = TextShadow),
-                modifier = Modifier.align(Alignment.Center).padding(24.dp),
-            )
-        }
         for (i in 0 until cells) {
             val r = i / cols; val c = i % cols
             val e = s.layout[i]?.let(byKey::get)?.takeIf { it.key !in s.hidden && it.key !in s.vault }
