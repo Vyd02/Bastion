@@ -11,8 +11,8 @@ android {
         applicationId = "com.vyd.bastion"
         minSdk = 30
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.8"
     }
     signingConfigs {
         create("release") {

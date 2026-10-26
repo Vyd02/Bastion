@@ -1,5 +1,5 @@
 {
-  "version": "1.7",
+  "version": "1.8",
   "apk": "https://raw.githubusercontent.com/Vyd02/Bastion/main/releases/Bastion.apk",
-  "notes": "Updates show up within minutes; home hint removed."
+  "notes": "Install updates straight from the menu."
 }

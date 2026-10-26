@@ -73,6 +73,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -272,9 +273,26 @@ private fun PcMain(
         }
         item {
             val scope = androidx.compose.runtime.rememberCoroutineScope()
-            NavRow(Icons.Rounded.AutoAwesome, "Check for updates",
-                "Version ${act.packageManager.getPackageInfo(act.packageName, 0).versionName}") {
-                scope.launch { com.vyd.bastion.Updater.check(act, force = true) }
+            val up by com.vyd.bastion.Updater.state.collectAsState()
+            var checking by remember { mutableStateOf(false) }
+            val ver = act.packageManager.getPackageInfo(act.packageName, 0).versionName
+            val (title, sub) = when (val u = up) {
+                is com.vyd.bastion.Updater.State.Available -> "Install update ${u.version}" to "You have $ver — tap to download & install"
+                is com.vyd.bastion.Updater.State.Downloading ->
+                    "Updating to ${u.version}" to (if (u.progress >= 1f) "Confirm the install…" else "Downloading ${(u.progress * 100).toInt()}%")
+                is com.vyd.bastion.Updater.State.Failed -> "Update failed" to "${u.msg} — tap to retry"
+                else -> "Check for updates" to (if (checking) "Checking GitHub…" else "Version $ver")
+            }
+            NavRow(Icons.Rounded.AutoAwesome, title, sub) {
+                when (val u = up) {
+                    is com.vyd.bastion.Updater.State.Available ->
+                        if (!com.vyd.bastion.Updater.canInstall(act)) {
+                            vm.toast("Allow Bastion to install updates, then tap again")
+                            com.vyd.bastion.Updater.openInstallPermission(act)
+                        } else scope.launch { com.vyd.bastion.Updater.downloadAndInstall(act, u) }
+                    is com.vyd.bastion.Updater.State.Downloading -> {}
+                    else -> scope.launch { checking = true; com.vyd.bastion.Updater.check(act, force = true); checking = false }
+                }
             }
         }
         item { NavRow(Icons.Rounded.Home, "Default home app", if (isDefault) "Bastion is your home ✓" else "Not set — tap to choose Bastion") { vm.openHomeSettings(act) } }
