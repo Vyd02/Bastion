@@ -25,6 +25,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.runtime.produceState
+import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -163,6 +172,8 @@ fun LauncherRoot(vm: LauncherViewModel) {
     var vaultManage by remember { mutableStateOf(false) }
     var settleJob by remember { mutableStateOf<Job?>(null) }
     val drawerShown by remember { androidx.compose.runtime.derivedStateOf { progress > 0.002f } }
+    val drag = remember { DragState() }
+    val kb = LocalSoftwareKeyboardController.current
 
     fun settle(target: Float, velocity: Float = 0f) {
         settleJob?.cancel()
@@ -179,6 +190,16 @@ fun LauncherRoot(vm: LauncherViewModel) {
     }
     fun openVault() = vm.authenticate(act, "Open Vault") { vm.vaultOpen.value = true }
 
+    drag.onStart = { _, from -> if (from == null) { kb?.hide(); closeDrawer() } }
+    drag.onDrop = { e, from, at ->
+        val target = drag.slotAt(at)
+        when {
+            from != null && drag.removeAt(at) -> vm.removeSlot(from)
+            target != null -> vm.drop(e.key, from, target)
+            from == null -> vm.dropAnywhere(e.key)
+        }
+    }
+
     LaunchedEffect(homeSig) {
         if (homeSig > 0) {
             showPrivacy = false; optionsFor = null; vaultManage = false
@@ -194,9 +215,7 @@ fun LauncherRoot(vm: LauncherViewModel) {
     }
 
     val visible = remember(apps, s.hidden, s.vault) { apps.apps.filter { it.key !in s.hidden && it.key !in s.vault } }
-    val dockApps = remember(apps, s.dock, s.vault) {
-        s.dock.mapNotNull { k -> apps.apps.firstOrNull { it.key == k && it.key !in s.vault } }
-    }
+    val byKey = remember(apps) { apps.apps.associateBy { it.key } }
 
     // Drawer pulls closed when the grid is already at the top and you keep dragging down.
     val drawerConn = remember {
@@ -228,14 +247,14 @@ fun LauncherRoot(vm: LauncherViewModel) {
         }
     }
 
+    androidx.compose.runtime.CompositionLocalProvider(LocalDrag provides drag) {
     Box(Modifier.fillMaxSize().onSizeChanged { heightPx = it.height.toFloat().coerceAtLeast(1f) }) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.12f + 0.58f * progress)))
         AuroraBackground(Modifier.fillMaxSize().graphicsLayer { alpha = 0.25f + 0.75f * progress })
 
         HomeScreen(
-            vm = vm, apps = apps, s = s, dockApps = dockApps,
+            vm = vm, s = s, byKey = byKey,
             onSearch = { openDrawer(true) },
-            onPrivacy = ::openPrivacy,
             onOptions = { optionsFor = it },
             modifier = Modifier
                 .graphicsLayer {
@@ -256,7 +275,7 @@ fun LauncherRoot(vm: LauncherViewModel) {
                 ),
         )
 
-        if (drawerShown) {
+        if (drawerShown || drag.active) {
             Drawer(
                 vm = vm, apps = apps, s = s, visible = visible, isDefault = isDefault,
                 searchMode = searchMode, onSearchMode = { searchMode = it },
@@ -284,6 +303,9 @@ fun LauncherRoot(vm: LauncherViewModel) {
         ) {
             PrivateSpaceOverlay(vm, apps.privateSpace, s, isDefault, onOptions = { optionsFor = it }, onPrivacy = ::openPrivacy)
         }
+
+        DragLayer(drag, vm)
+    }
     }
 
     if (showPrivacy) {
@@ -307,58 +329,177 @@ fun LauncherRoot(vm: LauncherViewModel) {
 // ======================================================================
 // HOME
 // ======================================================================
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HomeScreen(
-    vm: LauncherViewModel, apps: AppsState, s: Settings, dockApps: List<AppEntry>,
-    onSearch: () -> Unit, onPrivacy: () -> Unit, onOptions: (AppEntry) -> Unit, modifier: Modifier,
+    vm: LauncherViewModel, s: Settings, byKey: Map<String, AppEntry>,
+    onSearch: () -> Unit, onOptions: (AppEntry) -> Unit, modifier: Modifier,
 ) {
-    val act = LocalContext.current.findActivity()
     Column(
-        modifier.fillMaxSize()
-            .combinedClickable(
-                interactionSource = remember { MutableInteractionSource() }, indication = null,
-                onClick = {}, onLongClick = onPrivacy, onDoubleClick = { vm.lockEverything() },
-            )
-            .systemBarsPadding().padding(horizontal = 22.dp),
+        modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp),
     ) {
-        Spacer(Modifier.height(40.dp))
-        BigClock()
-        Greeting(s.name)
-        Spacer(Modifier.height(18.dp))
-        UpdateBanner()
-        Spacer(Modifier.weight(1f))
-
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp)
+                .pointerInput(Unit) { detectTapGestures(onDoubleTap = { vm.lockEverything(silent = true) }) }
+        ) {
+            Spacer(Modifier.height(32.dp))
+            BigClock()
+            Greeting(s.name)
+            Spacer(Modifier.height(12.dp))
+            UpdateBanner()
+        }
+        HomeGrid(vm, s, byKey, onOptions, Modifier.weight(1f).fillMaxWidth())
 
         Row(
-            Modifier.fillMaxWidth().height(54.dp).glass(RoundedCornerShape(27.dp)).clickable(onClick = onSearch)
-                .padding(horizontal = 18.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp).height(54.dp).glass(RoundedCornerShape(27.dp))
+                .clickable(onClick = onSearch).padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(Icons.Rounded.Search, null, tint = Color.White.copy(alpha = 0.85f))
             Spacer(Modifier.width(12.dp))
             Text("Search apps", color = Color.White.copy(alpha = 0.7f), fontSize = 16.sp, modifier = Modifier.weight(1f))
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
+        Dock(vm, s, byKey, onOptions)
+        SwipeHint()
+    }
+}
 
-        Row(
-            Modifier.fillMaxWidth().glass(RoundedCornerShape(30.dp)).padding(horizontal = 8.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (dockApps.isEmpty()) {
-                Text(
-                    "Long-press any app → Add to dock", color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 13.sp, modifier = Modifier.padding(vertical = 26.dp),
+/** Free-placement home grid. Cells register as drop targets; icons jiggle while something is being dragged. */
+@Composable
+private fun HomeGrid(
+    vm: LauncherViewModel, s: Settings, byKey: Map<String, AppEntry>,
+    onOptions: (AppEntry) -> Unit, modifier: Modifier,
+) {
+    val act = LocalContext.current.findActivity()
+    val drag = LocalDrag.current
+    val t = rememberInfiniteTransition(label = "jiggle")
+    val wobble by t.animateFloat(-2.2f, 2.2f, infiniteRepeatable(tween(140), RepeatMode.Reverse), label = "wob")
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+        val cols = 4
+        val rows = (maxHeight / 104.dp).toInt().coerceIn(1, 6)
+        val cells = cols * rows
+        LaunchedEffect(cells) { vm.homeCells = cells; drag.targets.keys.removeAll { it in cells until 100 } }
+        val cw = maxWidth / cols
+        val ch = maxHeight / rows
+        val hover = if (drag.active) drag.hoverSlot() else null
+        val anyApps = (0 until cells).any { s.layout[it]?.let(byKey::get) != null }
+
+        if (!anyApps && !drag.active) {
+            Text(
+                "Hold an app in your drawer, then drag it up here",
+                color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp, textAlign = TextAlign.Center,
+                style = TextStyle(shadow = TextShadow),
+                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+            )
+        }
+        for (i in 0 until cells) {
+            val r = i / cols; val c = i % cols
+            val e = s.layout[i]?.let(byKey::get)?.takeIf { it.key !in s.hidden && it.key !in s.vault }
+            val isHover = hover == i
+            val ring by animateFloatAsState(if (isHover) 1f else 0f, spring(0.5f, 500f), label = "ring")
+            Box(
+                Modifier.offset(cw * c, ch * r).size(cw, ch)
+                    .onGloballyPositioned { drag.targets[i] = it },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (e == null) Box(Modifier.fillMaxSize().pointerInput(Unit) {
+                    detectTapGestures(onDoubleTap = { vm.lockEverything(silent = true) })
+                })
+                if (drag.active) {
+                    Box(
+                        Modifier.size(66.dp).graphicsLayer { val k = 0.85f + 0.15f * ring; scaleX = k; scaleY = k }
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.White.copy(alpha = 0.06f + 0.18f * ring))
+                    )
+                }
+                if (e != null) {
+                    val lifted = drag.active && drag.fromSlot == i
+                    AppIcon(
+                        e, vm.repo,
+                        Modifier.fillMaxWidth().graphicsLayer {
+                            alpha = if (lifted) 0.25f else 1f
+                            rotationZ = if (drag.active && !lifted) wobble * (if (i % 2 == 0) 1f else -1f) else 0f
+                        },
+                        size = 56.dp, showLabel = ch >= 92.dp, locked = e.key in s.locked,
+                        canDrag = true, dragSlot = i,
+                        onClick = { b -> vm.launch(act, e, b) }, onLongClick = { onOptions(e) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Dock(vm: LauncherViewModel, s: Settings, byKey: Map<String, AppEntry>, onOptions: (AppEntry) -> Unit) {
+    val act = LocalContext.current.findActivity()
+    val drag = LocalDrag.current
+    val hover = if (drag.active) drag.hoverSlot() else null
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 6.dp).height(80.dp).glass(RoundedCornerShape(30.dp)).padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        for (j in 0 until Settings.DOCK_SIZE) {
+            val slot = Settings.DOCK_START + j
+            val e = s.layout[slot]?.let(byKey::get)?.takeIf { it.key !in s.hidden && it.key !in s.vault }
+            val glow by animateFloatAsState(if (hover == slot) 1f else 0f, spring(0.5f, 500f), label = "dg")
+            Box(
+                Modifier.weight(1f).fillMaxHeight()
+                    .onGloballyPositioned { drag.targets[slot] = it },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (drag.active) Box(
+                    Modifier.size(58.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.05f + 0.2f * glow))
                 )
-            } else dockApps.forEachIndexed { i, e ->
-                AppIcon(
-                    e, vm.repo, Modifier.weight(1f), size = 54.dp, showLabel = false,
-                    locked = e.key in s.locked, enterIndex = i,
+                if (e != null) AppIcon(
+                    e, vm.repo, Modifier.graphicsLayer { alpha = if (drag.active && drag.fromSlot == slot) 0.25f else 1f },
+                    size = 52.dp, showLabel = false, locked = e.key in s.locked,
+                    canDrag = true, dragSlot = slot,
                     onClick = { b -> vm.launch(act, e, b) }, onLongClick = { onOptions(e) },
                 )
             }
         }
-        SwipeHint()
+    }
+}
+
+/** The icon under your finger + the "Remove" target at the top. */
+@Composable
+private fun DragLayer(drag: DragState, vm: LauncherViewModel) {
+    val e = drag.entry
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    Box(Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            drag.active && drag.fromSlot != null,
+            enter = slideInVertically { -it } + fadeIn(), exit = slideOutVertically { -it } + fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            val over = drag.overRemove()
+            val bg by animateColorAsState(if (over) Danger else Color(0xCC1F1B2C), label = "rm")
+            val sc by animateFloatAsState(if (over) 1.12f else 1f, spring(0.4f, 600f), label = "rms")
+            Row(
+                Modifier.statusBarsPadding().padding(top = 14.dp)
+                    .graphicsLayer { scaleX = sc; scaleY = sc }
+                    .onGloballyPositioned { drag.removeZone = it }
+                    .clip(RoundedCornerShape(24.dp)).background(bg).padding(horizontal = 22.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Close, null, tint = Color.White)
+                Spacer(Modifier.width(8.dp))
+                Text("Remove", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (e != null) {
+            val px = with(density) { 64.dp.roundToPx() }
+            val bmp by produceState(vm.repo.cachedIcon(e.key), e.key) { value = vm.repo.icon(e, px) }
+            val pop = remember { androidx.compose.animation.core.Animatable(0.8f) }
+            LaunchedEffect(e.key) { pop.animateTo(1.18f, spring(0.45f, 500f)) }
+            Box(
+                Modifier
+                    .offset { IntOffset((drag.pos.x - px / 2f).roundToInt(), (drag.pos.y - px / 2f).roundToInt()) }
+                    .size(64.dp)
+                    .graphicsLayer { scaleX = pop.value; scaleY = pop.value; shadowElevation = 24f; shape = RoundedCornerShape(20.dp); clip = false }
+            ) { IconImage(e, bmp, 64.dp, false) }
+        }
     }
 }
 
@@ -564,6 +705,7 @@ private fun AppGrid(
                 AppIcon(
                     e, vm.repo, size = if (s.columns >= 5) 50.dp else 58.dp,
                     locked = e.key in s.locked, enterIndex = if (i < 28) i else -1,
+                    canDrag = e.profile != com.vyd.bastion.ProfileKind.PRIVATE,
                     onClick = { b -> vm.launch(act, e, b) }, onLongClick = { onOptions(e) },
                 )
             }

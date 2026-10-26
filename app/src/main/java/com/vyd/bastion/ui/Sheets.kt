@@ -279,7 +279,7 @@ private fun PcMain(
         }
         item { NavRow(Icons.Rounded.Home, "Default home app", if (isDefault) "Bastion is your home ✓" else "Not set — tap to choose Bastion") { vm.openHomeSettings(act) } }
         item {
-            Text("Gestures: swipe up = apps · swipe down = notifications · long-press home = this menu · double-tap home = lock everything",
+            Text("Gestures: swipe up = apps · swipe down = notifications · hold an app = menu · hold + drag = move it · double-tap home = lock everything",
                 color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(24.dp))
         }
@@ -484,7 +484,9 @@ fun AppOptionsSheet(e: AppEntry, vm: LauncherViewModel, s: Settings, onDismiss: 
             )
             Spacer(Modifier.height(18.dp))
             val opts = buildList {
-                if (main) add(Opt(if (e.key in s.dock) "Undock" else "Dock", Icons.Rounded.Dock, Cyan) { vm.toggleDock(e.key) })
+                val onHome = s.layout.any { it.value == e.key && it.key < com.vyd.bastion.Settings.DOCK_START }
+                if (main && e.key !in s.vault) add(Opt(if (onHome) "Off home" else "To home", Icons.Rounded.Home, Color.White) { vm.toggleHome(e.key) })
+                if (main && e.key !in s.vault) add(Opt(if (e.key in s.dock) "Undock" else "Dock", Icons.Rounded.Dock, Cyan) { vm.toggleDock(e.key) })
                 if (main && e.key !in s.vault) add(Opt(if (e.key in s.hidden) "Unhide" else "Hide",
                     if (e.key in s.hidden) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff, Color(0xFFFFC857)) {
                     if (e.key in s.hidden) vm.authenticate(act, "Unhide ${e.label}") { vm.toggleHidden(e.key) } else vm.toggleHidden(e.key)
@@ -492,7 +494,7 @@ fun AppOptionsSheet(e: AppEntry, vm: LauncherViewModel, s: Settings, onDismiss: 
                 add(Opt(if (locked) "Unlock" else "Lock", if (locked) Icons.Rounded.LockOpen else Icons.Rounded.Lock, Mint) {
                     if (locked) vm.authenticate(act, "Remove lock from ${e.label}") { vm.toggleLocked(e.key) } else vm.toggleLocked(e.key)
                 })
-                if (main) add(Opt(if (e.key in s.vault) "Unvault" else "Vault", Icons.Rounded.Inventory2, Color(0xFFFF5FA2)) {
+                if (main && (e.key in s.vault || !s.stealthVault)) add(Opt(if (e.key in s.vault) "Unvault" else "Vault", Icons.Rounded.Inventory2, Color(0xFFFF5FA2)) {
                     if (e.key in s.vault) vm.toggleVault(e.key)
                     else { vm.toggleVault(e.key); vm.toast("${e.label} moved to Vault") }
                 })

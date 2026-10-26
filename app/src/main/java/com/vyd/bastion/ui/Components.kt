@@ -40,6 +40,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -96,8 +106,10 @@ fun Modifier.glass(shape: androidx.compose.ui.graphics.Shape = RoundedCornerShap
 fun androidx.compose.ui.geometry.Rect.toAndroid() =
     android.graphics.Rect(left.toInt(), top.toInt(), right.toInt(), bottom.toInt())
 
-/** Animated app icon: staggered pop-in entrance, springy press, lock badge. */
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Animated app icon. Tap = open, hold = options, hold then move = drag (when [canDrag]).
+ * [dragSlot] is the home/dock slot it lives in (null when it's in the drawer).
+ */
 @Composable
 fun AppIcon(
     entry: AppEntry,
@@ -107,13 +119,14 @@ fun AppIcon(
     showLabel: Boolean = true,
     locked: Boolean = false,
     enterIndex: Int = -1,
+    canDrag: Boolean = false,
+    dragSlot: Int? = null,
     onClick: (android.graphics.Rect?) -> Unit,
     onLongClick: () -> Unit,
 ) {
     val px = with(LocalDensity.current) { size.roundToPx() }
     val bmp by produceState(repo.cachedIcon(entry.key), entry.key) { value = repo.icon(entry, px) }
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
+    var pressed by remember { mutableStateOf(false) }
     val press by animateFloatAsState(if (pressed) 0.84f else 1f, spring(0.4f, 700f), label = "press")
     val appear = remember { Animatable(if (enterIndex >= 0) 0f else 1f) }
     LaunchedEffect(Unit) {
@@ -123,7 +136,10 @@ fun AppIcon(
         }
     }
     val haptic = LocalHapticFeedback.current
-    var bounds: android.graphics.Rect? = null
+    val drag = LocalDrag.current
+    val latestClick by rememberUpdatedState(onClick)
+    val latestLong by rememberUpdatedState(onLongClick)
+    val coords = remember { arrayOfNulls<LayoutCoordinates>(1) }
     Column(
         modifier
             .graphicsLayer {
@@ -134,28 +150,50 @@ fun AppIcon(
                 translationY = (1f - a) * 36.dp.toPx()
                 rotationZ = (1f - a) * -8f
             }
-            .onGloballyPositioned { bounds = it.boundsInWindow().toAndroid() }
-            .combinedClickable(
-                interactionSource = interaction, indication = null,
-                onClick = { onClick(bounds) },
-                onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onLongClick() },
-            )
+            .onGloballyPositioned { coords[0] = it }
+            .pointerInput(entry.key, canDrag, dragSlot) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    pressed = true
+                    val lp = awaitLongPressOrCancellation(down.id)
+                    if (lp == null) {
+                        pressed = false
+                        val c = currentEvent.changes.firstOrNull { it.id == down.id }
+                        if (c != null && c.changedToUp()) {
+                            c.consume()
+                            latestClick(coords[0]?.takeIf { it.isAttached }?.boundsInWindow()?.toAndroid())
+                        }
+                        return@awaitEachGesture
+                    }
+                    lp.consume()
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    var moved = 0f
+                    var dragging = false
+                    fun windowPos(local: Offset): Offset? =
+                        coords[0]?.takeIf { it.isAttached }?.localToWindow(local)
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!c.pressed) { c.consume(); break }
+                        val d = c.positionChange()
+                        c.consume()
+                        moved += d.getDistance()
+                        if (!dragging && canDrag && moved > viewConfiguration.touchSlop) {
+                            dragging = true
+                            pressed = false
+                            drag.start(entry, dragSlot, windowPos(c.position) ?: Offset.Zero)
+                        } else if (dragging) {
+                            drag.pos = windowPos(c.position) ?: (drag.pos + d)
+                        }
+                    }
+                    pressed = false
+                    if (dragging) drag.end() else latestLong()
+                }
+            }
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box {
-            val b = bmp
-            if (b != null) Image(b, entry.label, Modifier.size(size))
-            else Box(Modifier.size(size).clip(RoundedCornerShape(18.dp)).background(Glass))
-            if (locked) {
-                Box(
-                    Modifier.align(Alignment.BottomEnd).offset(4.dp, 4.dp).size(22.dp)
-                        .clip(CircleShape).background(Brush.linearGradient(listOf(Violet, Cyan)))
-                        .border(2.dp, Color(0xFF14111E), CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Rounded.Lock, null, Modifier.size(12.dp), tint = Color.White) }
-            }
-        }
+        IconImage(entry, bmp, size, locked)
         if (showLabel) {
             Spacer(Modifier.height(6.dp))
             Text(
@@ -163,6 +201,22 @@ fun AppIcon(
                 style = TextStyle(color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Medium, shadow = TextShadow),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
             )
+        }
+    }
+}
+
+@Composable
+fun IconImage(entry: AppEntry, bmp: androidx.compose.ui.graphics.ImageBitmap?, size: Dp, locked: Boolean) {
+    Box {
+        if (bmp != null) Image(bmp, entry.label, Modifier.size(size))
+        else Box(Modifier.size(size).clip(RoundedCornerShape(18.dp)).background(Glass))
+        if (locked) {
+            Box(
+                Modifier.align(Alignment.BottomEnd).offset(4.dp, 4.dp).size(22.dp)
+                    .clip(CircleShape).background(Brush.linearGradient(listOf(Violet, Cyan)))
+                    .border(2.dp, Color(0xFF14111E), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Rounded.Lock, null, Modifier.size(12.dp), tint = Color.White) }
         }
     }
 }

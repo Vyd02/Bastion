@@ -149,25 +149,65 @@ class LauncherViewModel(private val app: Application) : AndroidViewModel(app) {
         runCatching { act.startActivity(Intent(SysSettings.ACTION_SECURITY_SETTINGS)) }
     }
 
-    fun lockEverything() {
+    fun lockEverything(silent: Boolean = false) {
         vaultOpen.value = false
         privateOpen.value = false
-        setPrivateLocked(true)
-        toast("Everything locked down")
+        setPrivateLocked(true, silent = true)
+        if (!silent) toast("Everything locked down")
     }
 
     // ---------------- Settings helpers ----------------
     private fun Set<String>.flip(k: String) = if (k in this) this - k else this + k
 
-    fun toggleHidden(k: String) = prefs.update { it.copy(hidden = it.hidden.flip(k)) }
+    /** Number of home-grid cells currently on screen (set by the UI). */
+    var homeCells = 20
+
+    private fun Map<Int, String>.firstEmpty(range: IntRange) = range.firstOrNull { it !in this }
+    private val dockRange get() = Settings.DOCK_START until Settings.DOCK_START + Settings.DOCK_SIZE
+
+    fun toggleHidden(k: String) = prefs.update {
+        if (k in it.hidden) it.copy(hidden = it.hidden - k)
+        else it.copy(hidden = it.hidden + k, layout = it.layout.filterValues { v -> v != k })
+    }
     fun toggleLocked(k: String) = prefs.update { it.copy(locked = it.locked.flip(k)) }
     fun toggleVault(k: String) = prefs.update {
-        it.copy(vault = it.vault.flip(k), dock = it.dock - k)
+        it.copy(vault = it.vault.flip(k), layout = it.layout.filterValues { v -> v != k })
     }
-    fun toggleDock(k: String) = prefs.update {
-        if (k in it.dock) it.copy(dock = it.dock - k)
-        else if (it.dock.size >= 5) { toast("Dock holds 5 apps"); it }
-        else it.copy(dock = it.dock + k)
+    fun toggleDock(k: String) = toggleZone(k, dockRange, "Dock is full")
+    fun toggleHome(k: String) = toggleZone(k, 0 until homeCells, "Home screen is full")
+
+    private fun toggleZone(k: String, range: IntRange, fullMsg: String) = prefs.update { s ->
+        val there = s.layout.entries.firstOrNull { it.value == k && it.key in range }
+        if (there != null) return@update s.copy(layout = s.layout - there.key)
+        val slot = s.layout.firstEmpty(range) ?: run { toast(fullMsg); return@update s }
+        s.copy(layout = s.layout.filterValues { it != k } + (slot to k))
     }
+
+    fun removeSlot(slot: Int) = prefs.update { it.copy(layout = it.layout - slot) }
+
+    /** Drag-and-drop: put [key] (coming from [from], or from the drawer when null) into slot [to]. */
+    fun drop(key: String, from: Int?, to: Int) = prefs.update { s ->
+        val m = s.layout.toMutableMap()
+        val occupant = m[to]
+        val origin = from ?: m.entries.firstOrNull { it.value == key }?.key
+        if (origin == to) return@update s
+        if (origin != null) {
+            m.remove(origin)
+            if (occupant != null) m[origin] = occupant            // swap places
+        } else if (occupant != null) {                            // new app lands on an occupied cell
+            val zone = if (to >= Settings.DOCK_START) dockRange else 0 until homeCells
+            (m.firstEmpty(zone) ?: m.firstEmpty(0 until homeCells))?.let { m[it] = occupant }
+        }
+        m[to] = key
+        s.copy(layout = m)
+    }
+
+    /** Dropped from the drawer onto open space: first empty home cell. */
+    fun dropAnywhere(key: String) = prefs.update { s ->
+        if (s.layout.values.contains(key)) return@update s
+        val slot = s.layout.firstEmpty(0 until homeCells) ?: run { toast("Home screen is full"); return@update s }
+        s.copy(layout = s.layout + (slot to key))
+    }
+
     fun update(block: (Settings) -> Settings) = prefs.update(block)
 }
