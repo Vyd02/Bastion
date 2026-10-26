@@ -12,10 +12,6 @@ import android.os.UserHandle
 import android.os.UserManager
 import android.provider.Settings as SysSettings
 import android.widget.Toast
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
-import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.AndroidViewModel
@@ -59,23 +55,26 @@ class LauncherViewModel(private val app: Application) : AndroidViewModel(app) {
     fun toast(msg: String) = Toast.makeText(app, msg, Toast.LENGTH_SHORT).show()
 
     // ---------------- Authentication ----------------
+    /** System fingerprint / PIN prompt (framework API — no fragments involved). */
     fun authenticate(act: FragmentActivity, title: String, onOk: () -> Unit) {
-        val auth = BIOMETRIC_WEAK or DEVICE_CREDENTIAL
-        if (BiometricManager.from(act).canAuthenticate(auth) != BiometricManager.BIOMETRIC_SUCCESS) {
-            toast("No screen lock set — add a PIN/fingerprint in Settings to protect this")
+        val auth = android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_WEAK or
+            android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        val bm = act.getSystemService(android.hardware.biometrics.BiometricManager::class.java)
+        if (bm == null || bm.canAuthenticate(auth) != android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS) {
+            toast("No screen lock set — add a PIN or fingerprint in Settings to protect this")
             onOk(); return
         }
-        val prompt = BiometricPrompt(act, ContextCompat.getMainExecutor(act),
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onOk()
-            })
-        prompt.authenticate(
-            BiometricPrompt.PromptInfo.Builder()
+        runCatching {
+            android.hardware.biometrics.BiometricPrompt.Builder(act)
                 .setTitle(title)
                 .setSubtitle("Bastion privacy check")
                 .setAllowedAuthenticators(auth)
                 .build()
-        )
+                .authenticate(android.os.CancellationSignal(), act.mainExecutor,
+                    object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(r: android.hardware.biometrics.BiometricPrompt.AuthenticationResult?) = onOk()
+                    })
+        }.onFailure { toast("Couldn't show the unlock prompt: ${it.message}") }
     }
 
     // ---------------- Launching ----------------

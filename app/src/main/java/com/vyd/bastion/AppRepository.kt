@@ -36,7 +36,7 @@ data class AppEntry(
     val user: UserHandle,
     val profile: ProfileKind,
     val category: Category,
-    val info: LauncherActivityInfo,
+    val info: LauncherActivityInfo?,
 ) {
     val packageName: String get() = component.packageName
 }
@@ -74,7 +74,13 @@ class AppRepository(private val ctx: Context, private val scope: CoroutineScope)
 
     fun close() = la.unregisterCallback(callback)
 
+    /** Test hook: pin the app list so tests control exactly what's installed. */
+    @androidx.annotation.VisibleForTesting
+    fun injectForTest(s: AppsState) { frozen = true; _state.value = s }
+    private var frozen = false
+
     fun refresh() {
+        if (frozen) return
         scope.launch { _state.value = withContext(Dispatchers.Default) { load() } }
     }
 
@@ -123,7 +129,7 @@ class AppRepository(private val ctx: Context, private val scope: CoroutineScope)
     private val icons = LruCache<String, ImageBitmap>(400)
     fun cachedIcon(key: String): ImageBitmap? = icons.get(key)
     suspend fun icon(entry: AppEntry, sizePx: Int): ImageBitmap = icons.get(entry.key) ?: withContext(Dispatchers.Default) {
-        val d = runCatching { entry.info.getBadgedIcon(0) }.getOrNull()
+        val d = runCatching { entry.info?.getBadgedIcon(0) }.getOrNull()
             ?: ctx.packageManager.defaultActivityIcon
         val bmp = d.toBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888).asImageBitmap()
         icons.put(entry.key, bmp); bmp

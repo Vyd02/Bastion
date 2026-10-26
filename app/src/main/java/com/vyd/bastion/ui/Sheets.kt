@@ -266,9 +266,9 @@ private fun PcMain(
                     Text("Grid columns", color = Color.White, fontWeight = FontWeight.SemiBold)
                     Text("Apps per row in the drawer", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
                 }
-                IconButton({ vm.update { it.copy(columns = (it.columns - 1).coerceAtLeast(3)) } }) { Icon(Icons.Rounded.Remove, null, tint = Color.White) }
+                IconButton({ vm.update { it.copy(columns = (it.columns - 1).coerceAtLeast(3)) } }) { Icon(Icons.Rounded.Remove, "Fewer columns", tint = Color.White) }
                 AnimatedContent(s.columns, label = "cols") { Text("$it", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
-                IconButton({ vm.update { it.copy(columns = (it.columns + 1).coerceAtMost(6)) } }) { Icon(Icons.Rounded.Add, null, tint = Color.White) }
+                IconButton({ vm.update { it.copy(columns = (it.columns + 1).coerceAtMost(6)) } }) { Icon(Icons.Rounded.Add, "More columns", tint = Color.White) }
             }
         }
         item {
