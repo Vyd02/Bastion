@@ -327,6 +327,7 @@ private fun HomeScreen(
         Greeting(s.name)
         Spacer(Modifier.height(18.dp))
         UpdateBanner()
+        Spacer(Modifier.weight(1f))
 
 
         Row(
