@@ -53,7 +53,7 @@ class LauncherUiTest {
 
     @Before fun setUp() {
         // Simulator: behave like a phone with no screen lock, so privacy checks pass straight through.
-        org.robolectric.Shadows.shadowOf(
+        org.robolectric.shadow.api.Shadow.extract<org.robolectric.shadows.ShadowBiometricManager>(
             androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
                 .getSystemService(android.hardware.biometrics.BiometricManager::class.java)
         ).setCanAuthenticate(false)
