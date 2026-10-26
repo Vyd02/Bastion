@@ -304,26 +304,25 @@ fun LauncherRoot(vm: LauncherViewModel) {
             PrivateSpaceOverlay(vm, apps.privateSpace, s, isDefault, onOptions = { optionsFor = it }, onPrivacy = ::openPrivacy)
         }
 
-        DragLayer(drag, vm)
-    }
-    }
-
-    if (showPrivacy) {
-        PrivacyCenterSheet(
-            vm = vm, apps = apps, s = s, isDefault = isDefault,
+        // Panels live in this same window (no pop-up dialog windows).
+        PrivacyCenterPanel(
+            visible = showPrivacy, vm = vm, apps = apps, s = s, isDefault = isDefault,
             onDismiss = { showPrivacy = false },
             onOpenVault = { showPrivacy = false; openVault() },
             onOpenPrivate = { showPrivacy = false; vm.privateOpen.value = true },
         )
-    }
-    if (vaultManage) {
-        AppPickerSheet(
+        AppPickerPanel(
+            visible = vaultManage,
             title = "Vault apps", subtitle = "Vault apps vanish from your drawer, search and dock.",
             apps = apps.apps, selected = s.vault, repo = vm.repo,
             onToggle = vm::toggleVault, onDismiss = { vaultManage = false },
         )
+        AppOptionsPanel(optionsFor, vm, s, onDismiss = { optionsFor = null })
+
+        DragLayer(drag, vm)
     }
-    optionsFor?.let { e -> AppOptionsSheet(e, vm, s, onDismiss = { optionsFor = null }) }
+    }
+
 }
 
 // ======================================================================

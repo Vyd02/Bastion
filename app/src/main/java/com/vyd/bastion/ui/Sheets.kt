@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -102,27 +104,26 @@ import com.vyd.bastion.LauncherViewModel
 import com.vyd.bastion.ProfileKind
 import com.vyd.bastion.Settings
 
-private enum class PcPage { MAIN, HIDDEN, LOCKED, VAULT, SECRET }
+private enum class PcPage { MAIN, HIDDEN, LOCKED, VAULT, SECRET, DIAG }
 
 // ======================================================================
 // PRIVACY CENTER — opened from the ⋮ button
 // ======================================================================
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PrivacyCenterSheet(
+fun PrivacyCenterPanel(
+    visible: Boolean,
     vm: LauncherViewModel, apps: AppsState, s: Settings, isDefault: Boolean,
     onDismiss: () -> Unit, onOpenVault: () -> Unit, onOpenPrivate: () -> Unit,
 ) {
     val act = LocalContext.current.findActivity()
     var page by remember { mutableStateOf(PcPage.MAIN) }
+    androidx.compose.runtime.LaunchedEffect(visible) {
+        if (visible) com.vyd.bastion.Diag.log("Privacy Center opened") else page = PcPage.MAIN
+    }
     fun gated(p: PcPage, title: String) = vm.authenticate(act, title) { page = p }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = SheetBg, dragHandle = null,
-    ) {
-        BackHandler(page != PcPage.MAIN) { page = PcPage.MAIN }
+    BackHandler(visible) { if (page != PcPage.MAIN) page = PcPage.MAIN else onDismiss() }
+    Panel(visible, onDismiss, heightFraction = 1f) {
         AnimatedContent(
             page, label = "pc",
             transitionSpec = {
@@ -130,7 +131,7 @@ fun PrivacyCenterSheet(
                 (slideInHorizontally(tween(300)) { if (fwd) it else -it } + fadeIn()) togetherWith
                     (slideOutHorizontally(tween(300)) { if (fwd) -it / 3 else it / 3 } + fadeOut())
             },
-            modifier = Modifier.fillMaxHeight(0.94f),
+            modifier = Modifier.fillMaxSize(),
         ) { p ->
             when (p) {
                 PcPage.MAIN -> PcMain(vm, apps, s, isDefault, onOpenVault, onOpenPrivate, onNav = { target ->
@@ -139,7 +140,7 @@ fun PrivacyCenterSheet(
                         PcPage.LOCKED -> gated(target, "Manage locked apps")
                         PcPage.VAULT -> gated(target, "Manage vault")
                         PcPage.SECRET -> gated(target, "Change secret code")
-                        PcPage.MAIN -> page = target
+                        PcPage.MAIN, PcPage.DIAG -> page = target
                     }
                 })
                 PcPage.HIDDEN -> PickerPage("Hidden apps", "Hidden apps disappear from the drawer and dock. They still run normally.",
@@ -149,6 +150,7 @@ fun PrivacyCenterSheet(
                 PcPage.VAULT -> PickerPage("Vault apps", "Vault apps vanish from drawer, search and dock — only visible inside the Vault.",
                     apps.apps, s.vault, vm.repo, vm::toggleVault) { page = PcPage.MAIN }
                 PcPage.SECRET -> SecretPage(vm, s) { page = PcPage.MAIN }
+                PcPage.DIAG -> DiagPage { page = PcPage.MAIN }
             }
         }
     }
@@ -163,9 +165,7 @@ private fun PcMain(
     val ps = apps.privateSpace
     LazyColumn(contentPadding = PaddingValues(bottom = 40.dp)) {
         item {
-            Column(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(width = 36.dp, height = 4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f)))
-                Spacer(Modifier.height(10.dp))
+            Column(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 ShieldPulse(54.dp, active = ps?.locked != false, icon = Icons.Rounded.Shield)
                 Text("Privacy Center", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                 Text(
@@ -296,6 +296,7 @@ private fun PcMain(
                 }
             }
         }
+        item { NavRow(Icons.Rounded.Info, "Diagnostics", "Log of every button press — copy it to Claude if something fails") { onNav(PcPage.DIAG) } }
         item { NavRow(Icons.Rounded.Home, "Default home app", if (isDefault) "Bastion is your home ✓" else "Not set — tap to choose Bastion") { vm.openHomeSettings(act) } }
         item {
             Text("Gestures: swipe up = apps · swipe down = notifications · hold an app = menu · hold + drag = move it · double-tap home = lock everything",
@@ -318,7 +319,8 @@ private fun Stat(label: String, value: Int, modifier: Modifier) {
 }
 
 @Composable
-private fun QuickTile(text: String, icon: ImageVector, colors: List<Color>, modifier: Modifier, onClick: () -> Unit) {
+private fun QuickTile(text: String, icon: ImageVector, colors: List<Color>, modifier: Modifier, onClick0: () -> Unit) {
+    val onClick = { com.vyd.bastion.Diag.log("tap tile: $text"); onClick0() }
     val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val sc by animateFloatAsState(if (pressed) 0.92f else 1f, spring(0.4f, 600f), label = "qt")
@@ -341,7 +343,8 @@ private fun RowIcon(icon: ImageVector) = Box(
 ) { Icon(icon, null, tint = Violet, modifier = Modifier.size(22.dp)) }
 
 @Composable
-private fun NavRow(icon: ImageVector, title: String, sub: String, onClick: () -> Unit) {
+private fun NavRow(icon: ImageVector, title: String, sub: String, onClick0: () -> Unit) {
+    val onClick = { com.vyd.bastion.Diag.log("tap row: $title"); onClick0() }
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -356,7 +359,8 @@ private fun NavRow(icon: ImageVector, title: String, sub: String, onClick: () ->
 }
 
 @Composable
-private fun ToggleRow(icon: ImageVector, title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(icon: ImageVector, title: String, sub: String, checked: Boolean, onChange0: (Boolean) -> Unit) {
+    val onChange = { v: Boolean -> com.vyd.bastion.Diag.log("toggle: $title -> $v"); onChange0(v) }
     Row(
         Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 20.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -473,30 +477,39 @@ private fun Field(icon: ImageVector, label: String, value: String, onChange: (St
 // ======================================================================
 // Standalone picker (used from the Vault "manage" button)
 // ======================================================================
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppPickerSheet(
-    title: String, subtitle: String, apps: List<AppEntry>, selected: Set<String>, repo: AppRepository,
+fun AppPickerPanel(
+    visible: Boolean, title: String, subtitle: String, apps: List<AppEntry>, selected: Set<String>, repo: AppRepository,
     onToggle: (String) -> Unit, onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = SheetBg) {
-        Box(Modifier.fillMaxHeight(0.9f)) { PickerPage(title, subtitle, apps, selected, repo, onToggle, onDismiss) }
+    BackHandler(visible) { onDismiss() }
+    Panel(visible, onDismiss, heightFraction = 0.92f) {
+        PickerPage(title, subtitle, apps, selected, repo, onToggle, onDismiss)
     }
 }
 
 // ======================================================================
 // LONG-PRESS APP OPTIONS
 // ======================================================================
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppOptionsSheet(e: AppEntry, vm: LauncherViewModel, s: Settings, onDismiss: () -> Unit) {
+fun AppOptionsPanel(entry: AppEntry?, vm: LauncherViewModel, s: Settings, onDismiss: () -> Unit) {
+    var last by remember { mutableStateOf(entry) }
+    if (entry != null) last = entry
+    BackHandler(entry != null) { onDismiss() }
+    Panel(entry != null, onDismiss, heightFraction = null) {
+        last?.let { AppOptionsContent(it, vm, s, onDismiss) }
+    }
+}
+
+@Composable
+private fun AppOptionsContent(e: AppEntry, vm: LauncherViewModel, s: Settings, onDismiss: () -> Unit) {
     val act = LocalContext.current.findActivity()
     val px = with(LocalDensity.current) { 64.dp.roundToPx() }
     val bmp by produceState(vm.repo.cachedIcon(e.key), e.key) { value = vm.repo.icon(e, px) }
     val main = e.profile != ProfileKind.PRIVATE
     val locked = e.key in s.locked
-    ModalBottomSheet(onDismiss, containerColor = SheetBg) {
-        Column(Modifier.fillMaxWidth().padding(bottom = 30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    run {
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             bmp?.let { Image(it, null, Modifier.size(64.dp)) }
             Text(e.label, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
             Text(
@@ -527,7 +540,7 @@ fun AppOptionsSheet(e: AppEntry, vm: LauncherViewModel, s: Settings, onDismiss: 
                     row.forEach { o ->
                         Column(
                             Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(CardBg)
-                                .clickable { o.action(); onDismiss() }.padding(vertical = 16.dp),
+                                .clickable { com.vyd.bastion.Diag.log("app menu: ${o.label} ${e.label}"); o.action(); onDismiss() }.padding(vertical = 16.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Box(Modifier.size(42.dp).clip(CircleShape).background(o.tint.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
@@ -545,3 +558,32 @@ fun AppOptionsSheet(e: AppEntry, vm: LauncherViewModel, s: Settings, onDismiss: 
 }
 
 private class Opt(val label: String, val icon: ImageVector, val tint: Color, val action: () -> Unit)
+
+@Composable
+private fun DiagPage(onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    val ver = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
+    val text = remember { com.vyd.bastion.Diag.text(ver) }
+    Column(Modifier.fillMaxSize().padding(bottom = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onBack) { Icon(Icons.Rounded.ArrowBack, "Back", tint = Color.White) }
+            Text("Diagnostics", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Button(
+                onClick = {
+                    ctx.getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("Bastion diagnostics", text))
+                    android.widget.Toast.makeText(ctx, "Copied — paste it to Claude", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Violet),
+            ) { Text("Copy") }
+        }
+        Text("Every tap and what Android answered. If a button seems dead, tap it, come back here, and copy this.",
+            color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp))
+        Box(
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(16.dp)).background(CardBg)
+                .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(12.dp)
+        ) {
+            Text(text, color = Color(0xFFE6E1F5), fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 11.sp)
+        }
+    }
+}

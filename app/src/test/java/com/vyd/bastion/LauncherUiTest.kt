@@ -306,4 +306,84 @@ class LauncherUiTest {
         openDrawer()
         rule.onNodeWithText("Chrome").assertDoesNotExist()
     }
+
+    // ---------------- Paths that only exist on a real phone with a screen lock ----------------
+    private fun withScreenLock() {
+        org.robolectric.shadow.api.Shadow.extract<org.robolectric.shadows.ShadowBiometricManager>(
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+                .getSystemService(android.hardware.biometrics.BiometricManager::class.java)
+        ).setCanAuthenticate(true)
+    }
+
+    @Test fun lockedPhone_hiddenAppsShowsFingerprintPrompt() {
+        withScreenLock()
+        openPrivacyCenter()
+        tapRow("Hidden apps")
+        val log = Diag.text("t")
+        assertTrue(log, log.contains("tap row: Hidden apps"))
+        assertTrue(log, log.contains("prompt requested") || log.contains("auth 'Manage hidden apps': success"))
+        assertFalse(log, log.contains("EXCEPTION"))
+    }
+
+    @Test fun lockedPhone_vaultTileShowsFingerprintPrompt() {
+        withScreenLock()
+        openPrivacyCenter()
+        tapTile("Vault")
+        val log = Diag.text("t")
+        assertTrue(log, log.contains("tap tile: Vault"))
+        assertTrue(log, log.contains("auth 'Open Vault'"))
+        assertFalse(log, log.contains("EXCEPTION"))
+    }
+
+    @Test fun lockAll_withPrivateSpaceOpen_asksAndroidToLock() {
+        inject(privateLocked = false)
+        openPrivacyCenter()
+        tapTile("Lock all")
+        val log = Diag.text("t")
+        assertTrue(log, log.contains("setPrivateLocked(lock=true"))
+        assertTrue(log, log.contains("requestQuietModeEnabled"))
+    }
+
+    @Test fun psSwitch_asksAndroidToLock() {
+        inject(privateLocked = false)
+        openPrivacyCenter()
+        tapRow("Private space locked")
+        assertTrue(Diag.text("t").contains("setPrivateLocked(lock=true"))
+    }
+
+    @Test fun privateTile_opensPrivateSpaceScreen_andMenuCloses() {
+        inject(privateLocked = false)
+        openPrivacyCenter()
+        tapTile("Private")
+        rule.onNodeWithText("Private space").assertExists()
+        rule.onNodeWithText("Privacy Center").assertDoesNotExist()
+    }
+
+    @Test fun installAndSettings_rowsReachAndroid() {
+        inject(privateLocked = false)
+        openPrivacyCenter()
+        tapRow("Private Space settings")
+        assertTrue(Diag.text("t").contains("privateSpaceSettings"))
+    }
+
+    @Test fun diagnostics_pageOpensAndCopies() {
+        openPrivacyCenter()
+        tapRow("Diagnostics"); tick(800)
+        rule.onNodeWithText("Copy").performClick(); tick()
+        val clip = rule.activity.getSystemService(android.content.ClipboardManager::class.java).primaryClip
+        assertTrue(clip?.getItemAt(0)?.text?.contains("Privacy Center opened") == true)
+    }
+
+    @Test fun back_closesPrivacyCenter() {
+        openPrivacyCenter()
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        tick(1500)
+        rule.onNodeWithText("Privacy Center").assertDoesNotExist()
+    }
+
+    @Test fun dimBackground_tapClosesPrivacyCenter() {
+        openPrivacyCenter()
+        rule.onRoot().performTouchInput { click(androidx.compose.ui.geometry.Offset(centerX, 5f)) }
+        tick(1500)
+    }
 }

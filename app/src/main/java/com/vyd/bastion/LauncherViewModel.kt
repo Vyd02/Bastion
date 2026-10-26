@@ -55,39 +55,56 @@ class LauncherViewModel(private val app: Application) : AndroidViewModel(app) {
     fun toast(msg: String) = Toast.makeText(app, msg, Toast.LENGTH_SHORT).show()
 
     // ---------------- Authentication ----------------
-    /** System fingerprint / PIN prompt (framework API — no fragments involved). */
+    /** System fingerprint / PIN prompt. Every outcome is logged and shown — never silent. */
     fun authenticate(act: FragmentActivity, title: String, onOk: () -> Unit) {
-        val auth = android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_WEAK or
+        val B = android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_WEAK or
             android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
         val bm = act.getSystemService(android.hardware.biometrics.BiometricManager::class.java)
-        if (bm == null || bm.canAuthenticate(auth) != android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS) {
-            toast("No screen lock set — add a PIN or fingerprint in Settings to protect this")
+        val can = runCatching { bm?.canAuthenticate(B) }.getOrNull()
+        Diag.log("auth '$title': canAuthenticate=$can")
+        if (can != android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS) {
+            if (can == android.hardware.biometrics.BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED || can == null) {
+                toast("No screen lock set — add a PIN or fingerprint in Settings to protect this")
+            }
             onOk(); return
         }
         runCatching {
             android.hardware.biometrics.BiometricPrompt.Builder(act)
                 .setTitle(title)
                 .setSubtitle("Bastion privacy check")
-                .setAllowedAuthenticators(auth)
+                .setAllowedAuthenticators(B)
                 .build()
                 .authenticate(android.os.CancellationSignal(), act.mainExecutor,
                     object : android.hardware.biometrics.BiometricPrompt.AuthenticationCallback() {
-                        override fun onAuthenticationSucceeded(r: android.hardware.biometrics.BiometricPrompt.AuthenticationResult?) = onOk()
+                        override fun onAuthenticationSucceeded(r: android.hardware.biometrics.BiometricPrompt.AuthenticationResult?) {
+                            Diag.log("auth '$title': success"); onOk()
+                        }
+                        override fun onAuthenticationError(code: Int, msg: CharSequence?) {
+                            Diag.log("auth '$title': error $code $msg")
+                            // 5 = canceled by system, 10 = user canceled — only surface real errors
+                            if (code != 10) toast("Unlock prompt closed: $msg")
+                        }
                     })
-        }.onFailure { toast("Couldn't show the unlock prompt: ${it.message}") }
+            Diag.log("auth '$title': prompt requested")
+        }.onFailure {
+            Diag.log("auth '$title': EXCEPTION ${it.javaClass.simpleName}: ${it.message}")
+            toast("Couldn't show the unlock prompt: ${it.message}")
+        }
     }
 
     // ---------------- Launching ----------------
     fun launch(act: FragmentActivity, e: AppEntry, bounds: Rect? = null) {
         val go = {
             runCatching { la.startMainActivity(e.component, e.user, bounds, null) }
-                .onFailure { toast("Couldn't open ${e.label}") }
+                .onSuccess { Diag.log("launch ${e.label} (${e.profile})") }
+                .onFailure { Diag.log("launch ${e.label} FAILED: ${it.message}"); toast("Couldn't open ${e.label}: ${it.message}") }
             Unit
         }
         if (e.key in prefs.settings.value.locked) authenticate(act, "Unlock ${e.label}", go) else go()
     }
 
     fun appInfo(e: AppEntry) = runCatching { la.startAppDetailsActivity(e.component, e.user, null, null) }
+        .onFailure { Diag.log("appInfo FAILED: ${it.message}"); toast("Couldn't open app info") }
 
     fun uninstall(act: FragmentActivity, e: AppEntry) {
         if (e.profile == ProfileKind.MAIN) {
@@ -98,8 +115,12 @@ class LauncherViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun openStore(act: FragmentActivity, inPrivate: Boolean) {
+        Diag.log("openStore private=$inPrivate")
         if (inPrivate) {
-            val store = repo.state.value.privateSpace?.apps?.firstOrNull { it.packageName == "com.android.vending" }
+            val ps = repo.state.value.privateSpace
+            if (ps == null) { toast("Private Space isn't available"); return }
+            if (ps.locked) { toast("Unlock Private Space first"); return }
+            val store = ps.apps.firstOrNull { it.packageName == "com.android.vending" }
             if (store != null) { launch(act, store); return }
             toast("Play Store isn't in your Private Space")
             return
@@ -110,6 +131,7 @@ class LauncherViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun openHomeSettings(act: FragmentActivity) {
+        Diag.log("openHomeSettings")
         runCatching { act.startActivity(Intent(SysSettings.ACTION_HOME_SETTINGS)) }
             .onFailure { act.startActivity(Intent(SysSettings.ACTION_SETTINGS)) }
     }
@@ -125,34 +147,61 @@ class LauncherViewModel(private val app: Application) : AndroidViewModel(app) {
     private var pollJob: Job? = null
 
     fun setPrivateLocked(lock: Boolean, silent: Boolean = false) {
-        val user: UserHandle = repo.state.value.privateSpace?.user ?: return
-        try {
-            um.requestQuietModeEnabled(lock, user)
-        } catch (_: SecurityException) {
-            if (!silent) toast("Make Bastion your default home app to control Private Space")
+        val ps = repo.state.value.privateSpace
+        Diag.log("setPrivateLocked(lock=$lock) current=${ps?.locked} default=${isDefaultHome.value}")
+        if (ps == null) { if (!silent) toast("Private Space isn't available to Bastion"); return }
+        if (ps.locked == lock) { if (!silent) toast(if (lock) "Private Space is already locked" else "Private Space is already open"); return }
+        val accepted = try {
+            um.requestQuietModeEnabled(lock, ps.user)
+        } catch (e: SecurityException) {
+            Diag.log("requestQuietModeEnabled SecurityException: ${e.message}")
+            if (!silent) toast(if (!isDefaultHome.value) "Set Bastion as your default home app first" else "Android blocked this: ${e.message}")
             return
-        } catch (_: Exception) { return }
+        } catch (e: Exception) {
+            Diag.log("requestQuietModeEnabled ${e.javaClass.simpleName}: ${e.message}")
+            if (!silent) toast("Couldn't ${if (lock) "lock" else "unlock"} Private Space: ${e.message}")
+            return
+        }
+        Diag.log("requestQuietModeEnabled returned $accepted")
+        if (!silent) toast(if (lock) "Locking Private Space…" else "Unlocking Private Space…")
         pollJob?.cancel()
         pollJob = viewModelScope.launch {
-            repeat(20) { repo.refresh(); delay(400) }
+            repeat(25) {
+                repo.refresh(); delay(400)
+                if (repo.state.value.privateSpace?.locked == lock) {
+                    Diag.log("Private Space now locked=$lock")
+                    if (!silent) toast(if (lock) "Private Space locked" else "Private Space unlocked")
+                    return@launch
+                }
+            }
+            Diag.log("Private Space state did not change after 10s")
+            if (!silent && lock) toast("Android didn't lock Private Space — try Private Space settings")
         }
     }
 
     fun privateSpaceSettings(act: FragmentActivity) {
+        Diag.log("privateSpaceSettings")
         if (Build.VERSION.SDK_INT >= 35) {
-            val sender = runCatching { la.privateSpaceSettingsIntent }.getOrNull()
+            val sender = runCatching { la.privateSpaceSettingsIntent }
+                .onFailure { Diag.log("privateSpaceSettingsIntent threw ${it.message}") }.getOrNull()
+            Diag.log("privateSpaceSettingsIntent=${sender != null}")
             if (sender != null) {
-                runCatching { act.startIntentSender(sender, null, 0, 0, 0); return }
+                val ok = runCatching { act.startIntentSender(sender, null, 0, 0, 0) }
+                    .onFailure { Diag.log("startIntentSender FAILED ${it.message}") }.isSuccess
+                if (ok) return
             }
         }
         runCatching { act.startActivity(Intent(SysSettings.ACTION_SECURITY_SETTINGS)) }
+            .onSuccess { toast("Open “Private space” in this menu") }
     }
 
     fun lockEverything(silent: Boolean = false) {
+        Diag.log("lockEverything silent=$silent")
         vaultOpen.value = false
         privateOpen.value = false
-        setPrivateLocked(true, silent = true)
-        if (!silent) toast("Everything locked down")
+        val ps = repo.state.value.privateSpace
+        if (ps != null && !ps.locked) setPrivateLocked(true, silent = silent)
+        else if (!silent) toast("Everything locked down")
     }
 
     // ---------------- Settings helpers ----------------
