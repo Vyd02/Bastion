@@ -47,8 +47,11 @@ class LauncherUiTest {
         tick()
     }
 
+    companion object {
+        init { com.vyd.bastion.ui.Motion.enabled = false }
+    }
+
     @Before fun setUp() {
-        rule.mainClock.autoAdvance = false
         vm = ViewModelProvider(rule.activity)[LauncherViewModel::class.java]
         inject()
     }

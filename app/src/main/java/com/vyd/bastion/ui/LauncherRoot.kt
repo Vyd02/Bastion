@@ -372,8 +372,7 @@ private fun HomeGrid(
 ) {
     val act = LocalContext.current.findActivity()
     val drag = LocalDrag.current
-    val t = rememberInfiniteTransition(label = "jiggle")
-    val wobble by t.animateFloat(-2.2f, 2.2f, infiniteRepeatable(tween(140), RepeatMode.Reverse), label = "wob")
+    val wobble by loop(-2.2f, 2.2f, infiniteRepeatable(tween(140), RepeatMode.Reverse), label = "wob")
     androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
         val cols = 4
         val rows = (maxHeight / 104.dp).toInt().coerceIn(1, 6)
@@ -498,7 +497,7 @@ private fun DragLayer(drag: DragState, vm: LauncherViewModel) {
 private fun BigClock() {
     val ctx = LocalContext.current
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(1000L - now % 1000L) } }
+    LaunchedEffect(Unit) { while (Motion.enabled) { now = System.currentTimeMillis(); delay(1000L - now % 1000L) } }
     val fmt = if (DateFormat.is24HourFormat(ctx)) "HH:mm" else "h:mm"
     val time = DateFormat.format(fmt, now).toString()
     val style = TextStyle(
@@ -535,8 +534,7 @@ private fun Greeting(name: String) {
 
 @Composable
 private fun PrivacyChip(ps: PrivateSpace?, s: Settings, onClick: () -> Unit) {
-    val t = rememberInfiniteTransition(label = "chip")
-    val glow by t.animateFloat(0.4f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "glow")
+    val glow by loop(0.4f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "glow")
     val secured = ps == null || ps.locked
     val text = buildString {
         append(if (ps == null) "Shield on" else if (ps.locked) "Private space locked" else "Private space open")
@@ -557,8 +555,7 @@ private fun PrivacyChip(ps: PrivateSpace?, s: Settings, onClick: () -> Unit) {
 
 @Composable
 private fun SwipeHint() {
-    val t = rememberInfiniteTransition(label = "hint")
-    val dy by t.animateFloat(0f, -8f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "dy")
+    val dy by loop(0f, -8f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "dy")
     Column(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(Icons.Rounded.KeyboardArrowUp, null, tint = Color.White.copy(alpha = 0.7f),
             modifier = Modifier.graphicsLayer { translationY = dy.dp.toPx() })
@@ -913,8 +910,7 @@ private fun UpdateBanner() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val st by com.vyd.bastion.Updater.state.collectAsStateWithLifecycle()
-    val t = rememberInfiniteTransition(label = "upd")
-    val shimmer by t.animateFloat(-1f, 2f, infiniteRepeatable(tween(2200)), label = "sh")
+    val shimmer by loop(-1f, 2f, infiniteRepeatable(tween(2200)), label = "sh")
     AnimatedVisibility(
         st !is com.vyd.bastion.Updater.State.Idle,
         enter = slideInVertically(spring(0.6f, 300f)) { -it } + fadeIn(),

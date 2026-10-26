@@ -70,7 +70,7 @@ class MainActivity : FragmentActivity() {
         // Keep checking for updates every 10 minutes while the launcher is on screen.
         lifecycleScope.launch {
             repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
-                while (true) {
+                while (com.vyd.bastion.ui.Motion.enabled) {
                     Updater.check(applicationContext)
                     kotlinx.coroutines.delay(10 * 60 * 1000L)
                 }

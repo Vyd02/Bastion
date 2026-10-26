@@ -225,8 +225,7 @@ fun IconImage(entry: AppEntry, bmp: androidx.compose.ui.graphics.ImageBitmap?, s
 /** Slow-drifting aurora blobs layered over the wallpaper. */
 @Composable
 fun AuroraBackground(modifier: Modifier = Modifier) {
-    val t = rememberInfiniteTransition(label = "aurora")
-    val phase by t.animateFloat(0f, (2 * Math.PI).toFloat(),
+    val phase by loop(0f, (2 * Math.PI).toFloat(),
         infiniteRepeatable(tween(18000, easing = LinearEasing)), label = "phase")
     Canvas(modifier) {
         val w = size.width; val h = size.height
@@ -241,10 +240,9 @@ fun AuroraBackground(modifier: Modifier = Modifier) {
 /** Pulsing shield with expanding radar rings. */
 @Composable
 fun ShieldPulse(size: Dp, active: Boolean, modifier: Modifier = Modifier, icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    val t = rememberInfiniteTransition(label = "pulse")
-    val ring by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing)), label = "ring")
-    val ring2 by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2200, delayMillis = 1100, easing = FastOutSlowInEasing)), label = "ring2")
-    val breathe by t.animateFloat(0.94f, 1.04f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "breathe")
+    val ring by loop(0f, 1f, infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing)), label = "ring")
+    val ring2 by loop(0f, 1f, infiniteRepeatable(tween(2200, delayMillis = 1100, easing = FastOutSlowInEasing)), label = "ring2")
+    val breathe by loop(0.94f, 1.04f, infiniteRepeatable(tween(1600), RepeatMode.Reverse), label = "breathe")
     val tint = if (active) Mint else Violet
     Box(modifier.size(size * 2f), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(size * 2f)) {
@@ -283,3 +281,14 @@ fun android.content.Context.findActivity(): androidx.fragment.app.FragmentActivi
     }
     error("No activity")
 }
+
+/** Global switch for endless animations (turned off only by the test suite). */
+object Motion { @Volatile var enabled = true }
+
+@Composable
+fun loop(
+    from: Float, to: Float,
+    spec: androidx.compose.animation.core.InfiniteRepeatableSpec<Float>, label: String,
+): androidx.compose.runtime.State<Float> =
+    if (Motion.enabled) rememberInfiniteTransition(label).animateFloat(from, to, spec, label)
+    else remember { androidx.compose.runtime.mutableFloatStateOf(from) }
