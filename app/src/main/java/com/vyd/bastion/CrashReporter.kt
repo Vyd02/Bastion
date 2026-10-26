@@ -28,4 +28,4 @@ object CrashReporter {
     fun clear(c: Context) { file(c).delete() }
 }
 
-object BuildConfigLite { const val VERSION = "1.8" }
+object BuildConfigLite { const val VERSION = "1.9" }

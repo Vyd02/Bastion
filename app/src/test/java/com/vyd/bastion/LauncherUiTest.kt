@@ -58,6 +58,7 @@ class LauncherUiTest {
                 .getSystemService(android.hardware.biometrics.BiometricManager::class.java)
         ).setCanAuthenticate(false)
         vm = ViewModelProvider(rule.activity)[LauncherViewModel::class.java]
+        rule.runOnUiThread { vm.prefs.update { Settings() } }
         inject()
     }
 

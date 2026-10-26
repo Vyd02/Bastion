@@ -1,5 +1,5 @@
 {
-  "version": "1.8",
+  "version": "1.9",
   "apk": "https://raw.githubusercontent.com/Vyd02/Bastion/main/releases/Bastion.apk",
-  "notes": "Install updates straight from the menu."
+  "notes": "Every button and setting tested; new fingerprint prompt; fixed stuck tiles."
 }
