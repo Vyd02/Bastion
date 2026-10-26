@@ -1,0 +1,173 @@
+package com.vyd.bastion
+
+import android.app.Application
+import android.app.role.RoleManager
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.LauncherApps
+import android.graphics.Rect
+import android.net.Uri
+import android.os.Build
+import android.os.UserHandle
+import android.os.UserManager
+import android.provider.Settings as SysSettings
+import android.widget.Toast
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+
+class LauncherViewModel(private val app: Application) : AndroidViewModel(app) {
+    val repo = AppRepository(app, viewModelScope)
+    val prefs = Prefs(app)
+
+    /** Bumped whenever the Home button is pressed while we're already in front. */
+    val homeSignal = MutableStateFlow(0)
+    val vaultOpen = MutableStateFlow(false)
+    val privateOpen = MutableStateFlow(false)
+    val isDefaultHome = MutableStateFlow(false)
+
+    private val la = app.getSystemService(LauncherApps::class.java)
+    private val um = app.getSystemService(UserManager::class.java)
+
+    init { repo.refresh() }
+    override fun onCleared() { repo.close() }
+
+    fun onResume() {
+        repo.refresh()
+        isDefaultHome.value = runCatching {
+            app.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_HOME)
+        }.getOrDefault(false)
+    }
+
+    fun goHome() { homeSignal.value++ }
+
+    fun onScreenOff() {
+        vaultOpen.value = false
+        privateOpen.value = false
+        if (prefs.settings.value.autoLock) setPrivateLocked(true, silent = true)
+    }
+
+    fun toast(msg: String) = Toast.makeText(app, msg, Toast.LENGTH_SHORT).show()
+
+    // ---------------- Authentication ----------------
+    fun authenticate(act: FragmentActivity, title: String, onOk: () -> Unit) {
+        val auth = BIOMETRIC_WEAK or DEVICE_CREDENTIAL
+        if (BiometricManager.from(act).canAuthenticate(auth) != BiometricManager.BIOMETRIC_SUCCESS) {
+            toast("No screen lock set — add a PIN/fingerprint in Settings to protect this")
+            onOk(); return
+        }
+        val prompt = BiometricPrompt(act, ContextCompat.getMainExecutor(act),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onOk()
+            })
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(title)
+                .setSubtitle("Bastion privacy check")
+                .setAllowedAuthenticators(auth)
+                .build()
+        )
+    }
+
+    // ---------------- Launching ----------------
+    fun launch(act: FragmentActivity, e: AppEntry, bounds: Rect? = null) {
+        val go = {
+            runCatching { la.startMainActivity(e.component, e.user, bounds, null) }
+                .onFailure { toast("Couldn't open ${e.label}") }
+            Unit
+        }
+        if (e.key in prefs.settings.value.locked) authenticate(act, "Unlock ${e.label}", go) else go()
+    }
+
+    fun appInfo(e: AppEntry) = runCatching { la.startAppDetailsActivity(e.component, e.user, null, null) }
+
+    fun uninstall(act: FragmentActivity, e: AppEntry) {
+        if (e.profile == ProfileKind.MAIN) {
+            runCatching {
+                act.startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${e.packageName}")))
+            }.onFailure { appInfo(e) }
+        } else appInfo(e)
+    }
+
+    fun openStore(act: FragmentActivity, inPrivate: Boolean) {
+        if (inPrivate) {
+            val store = repo.state.value.privateSpace?.apps?.firstOrNull { it.packageName == "com.android.vending" }
+            if (store != null) { launch(act, store); return }
+            toast("Play Store isn't in your Private Space")
+            return
+        }
+        val i = act.packageManager.getLaunchIntentForPackage("com.android.vending")
+        try { act.startActivity(i ?: Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q="))) }
+        catch (_: ActivityNotFoundException) { toast("Play Store not found") }
+    }
+
+    fun openHomeSettings(act: FragmentActivity) {
+        runCatching { act.startActivity(Intent(SysSettings.ACTION_HOME_SETTINGS)) }
+            .onFailure { act.startActivity(Intent(SysSettings.ACTION_SETTINGS)) }
+    }
+
+    fun expandNotifications() {
+        runCatching {
+            val sb = app.getSystemService("statusbar")
+            sb.javaClass.getMethod("expandNotificationsPanel").invoke(sb)
+        }
+    }
+
+    // ---------------- Private Space ----------------
+    private var pollJob: Job? = null
+
+    fun setPrivateLocked(lock: Boolean, silent: Boolean = false) {
+        val user: UserHandle = repo.state.value.privateSpace?.user ?: return
+        try {
+            um.requestQuietModeEnabled(lock, user)
+        } catch (_: SecurityException) {
+            if (!silent) toast("Make Bastion your default home app to control Private Space")
+            return
+        } catch (_: Exception) { return }
+        pollJob?.cancel()
+        pollJob = viewModelScope.launch {
+            repeat(20) { repo.refresh(); delay(400) }
+        }
+    }
+
+    fun privateSpaceSettings(act: FragmentActivity) {
+        if (Build.VERSION.SDK_INT >= 35) {
+            val sender = runCatching { la.privateSpaceSettingsIntent }.getOrNull()
+            if (sender != null) {
+                runCatching { act.startIntentSender(sender, null, 0, 0, 0); return }
+            }
+        }
+        runCatching { act.startActivity(Intent(SysSettings.ACTION_SECURITY_SETTINGS)) }
+    }
+
+    fun lockEverything() {
+        vaultOpen.value = false
+        privateOpen.value = false
+        setPrivateLocked(true)
+        toast("Everything locked down")
+    }
+
+    // ---------------- Settings helpers ----------------
+    private fun Set<String>.flip(k: String) = if (k in this) this - k else this + k
+
+    fun toggleHidden(k: String) = prefs.update { it.copy(hidden = it.hidden.flip(k)) }
+    fun toggleLocked(k: String) = prefs.update { it.copy(locked = it.locked.flip(k)) }
+    fun toggleVault(k: String) = prefs.update {
+        it.copy(vault = it.vault.flip(k), dock = it.dock - k)
+    }
+    fun toggleDock(k: String) = prefs.update {
+        if (k in it.dock) it.copy(dock = it.dock - k)
+        else if (it.dock.size >= 5) { toast("Dock holds 5 apps"); it }
+        else it.copy(dock = it.dock + k)
+    }
+    fun update(block: (Settings) -> Settings) = prefs.update(block)
+}
