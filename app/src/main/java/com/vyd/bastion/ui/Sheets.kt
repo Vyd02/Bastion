@@ -16,6 +16,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -318,12 +319,14 @@ private fun Stat(label: String, value: Int, modifier: Modifier) {
 
 @Composable
 private fun QuickTile(text: String, icon: ImageVector, colors: List<Color>, modifier: Modifier, onClick: () -> Unit) {
-    var pressed by remember { mutableStateOf(false) }
+    val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
     val sc by animateFloatAsState(if (pressed) 0.92f else 1f, spring(0.4f, 600f), label = "qt")
     Column(
         modifier.graphicsLayer { scaleX = sc; scaleY = sc }
             .clip(RoundedCornerShape(22.dp)).background(Brush.linearGradient(colors))
-            .clickable { pressed = !pressed; onClick() }.padding(vertical = 16.dp),
+            .clickable(interactionSource = src, indication = androidx.compose.material3.ripple(), onClick = onClick)
+            .padding(vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(icon, null, tint = Color.White, modifier = Modifier.size(26.dp))

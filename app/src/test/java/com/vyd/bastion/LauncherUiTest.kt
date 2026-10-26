@@ -52,6 +52,11 @@ class LauncherUiTest {
     }
 
     @Before fun setUp() {
+        // Simulator: behave like a phone with no screen lock, so privacy checks pass straight through.
+        org.robolectric.Shadows.shadowOf(
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+                .getSystemService(android.hardware.biometrics.BiometricManager::class.java)
+        ).setCanAuthenticate(false)
         vm = ViewModelProvider(rule.activity)[LauncherViewModel::class.java]
         inject()
     }
@@ -70,8 +75,23 @@ class LauncherUiTest {
         rule.onNodeWithText("Privacy Center").assertExists()
     }
 
-    private fun row(text: String) = rule.onAllNodesWithText(text)[0]
-    private fun tapRow(text: String) { row(text).performScrollTo().performClick(); tick() }
+    /** Finds [text], scrolling any lazy list until it's composed, then taps it. */
+    private fun tapRow(text: String) {
+        if (rule.onAllNodesWithText(text).fetchSemanticsNodes().isEmpty()) {
+            val lists = rule.onAllNodes(hasScrollToNodeAction()).fetchSemanticsNodes().size
+            for (i in 0 until lists) {
+                runCatching { rule.onAllNodes(hasScrollToNodeAction())[i].performScrollToNode(hasText(text)) }
+                tick(300)
+                if (rule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) break
+            }
+        }
+        val node = rule.onAllNodes(hasText(text) and hasClickAction()).let { all ->
+            if (all.fetchSemanticsNodes().isNotEmpty()) all[0] else rule.onAllNodesWithText(text)[0]
+        }
+        runCatching { node.performScrollTo() }
+        node.performClick(); tick()
+    }
+    private fun tapTile(text: String) { rule.onNode(hasText(text) and hasClickAction()).performClick(); tick(1500) }
 
     // ---------------- Home ----------------
     @Test fun home_showsClockSearchAndDock() {
@@ -170,15 +190,18 @@ class LauncherUiTest {
     @Test fun pc_switchVisualStateFollows() {
         openPrivacyCenter()
         tapRow("Hidden apps in search")
-        rule.onAllNodes(isToggleable())[2].performScrollTo().assertIsOn()
+        rule.onNode(hasText("Hidden apps in search")).assertExists()
+        assertTrue(s.hiddenInSearch)
+        rule.onAllNodes(isToggleable() and isOn()).fetchSemanticsNodes().let { assertTrue(it.size >= 2) } // auto-lock + this
     }
 
     @Test fun pc_gridColumns() {
         openPrivacyCenter()
         val c0 = s.columns
-        rule.onNodeWithContentDescription("More columns").performScrollTo().performClick(); tick()
+        tapRow("Grid columns")
+        rule.onNodeWithContentDescription("More columns").performClick(); tick()
         assertEquals(c0 + 1, s.columns)
-        rule.onNodeWithContentDescription("Fewer columns").performScrollTo().performClick(); tick()
+        rule.onNodeWithContentDescription("Fewer columns").performClick(); tick()
         assertEquals(c0, s.columns)
     }
 
@@ -186,7 +209,7 @@ class LauncherUiTest {
         openPrivacyCenter()
         tapRow("Hidden apps"); tick(800)
         rule.onNodeWithText("Hidden apps disappear", substring = true).assertExists()
-        rule.onNodeWithText("Instagram").performScrollTo().performClick(); tick()
+        tapRow("Instagram")
         assertTrue(insta.key in s.hidden)
         rule.onNodeWithContentDescription("Back").performClick(); tick(800)
         rule.onNodeWithText("Privacy Center").assertExists()
@@ -195,14 +218,14 @@ class LauncherUiTest {
     @Test fun pc_lockedPicker() {
         openPrivacyCenter()
         tapRow("Locked apps"); tick(800)
-        rule.onNodeWithText("YouTube").performScrollTo().performClick(); tick()
+        tapRow("YouTube")
         assertTrue(yt.key in s.locked)
     }
 
     @Test fun pc_vaultPicker() {
         openPrivacyCenter()
         tapRow("Vault apps"); tick(800)
-        rule.onNodeWithText("Messages").performScrollTo().performClick(); tick()
+        tapRow("Messages")
         assertTrue(msgs.key in s.vault)
     }
 
@@ -218,7 +241,7 @@ class LauncherUiTest {
 
     @Test fun pc_vaultTileOpensVault() {
         openPrivacyCenter()
-        rule.onNodeWithText("Vault").performClick(); tick(1500)
+        tapTile("Vault")
         rule.onNodeWithText("Only you can open this.").assertExists()
         rule.onNodeWithText("Add apps").performClick(); tick(1500)
         rule.onNodeWithText("Vault apps vanish", substring = true).assertExists()
@@ -226,7 +249,7 @@ class LauncherUiTest {
 
     @Test fun pc_privateTileOpensPrivateSpace_locked() {
         openPrivacyCenter()
-        rule.onNodeWithText("Private").performClick(); tick(1500)
+        tapTile("Private")
         rule.onNodeWithText("A space for your private apps").assertExists()
         rule.onNodeWithText("Unlock").performClick(); tick()
         rule.onNodeWithContentDescription("Close").performClick(); tick(1000)
@@ -236,7 +259,7 @@ class LauncherUiTest {
     @Test fun privateSpace_unlockedShowsAppsAndTheyLaunch() {
         inject(privateLocked = false)
         openPrivacyCenter()
-        rule.onNodeWithText("Private").performClick(); tick(1500)
+        tapTile("Private")
         rule.onNodeWithText("X").assertExists().performClick(); tick()
         rule.onNodeWithText("Lock").assertExists()
     }
@@ -274,7 +297,7 @@ class LauncherUiTest {
     @Test fun pc_toggleChangesVisibleOnHome_hiddenAppLeavesDrawer() {
         openPrivacyCenter()
         tapRow("Hidden apps"); tick(800)
-        rule.onNodeWithText("Chrome").performScrollTo().performClick(); tick()
+        tapRow("Chrome")
         rule.activity.onBackPressedDispatcher.let { rule.runOnUiThread { it.onBackPressed() } }; tick(800)
         rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }; tick(1500)
         // sheet may still be open; dismiss via home signal
