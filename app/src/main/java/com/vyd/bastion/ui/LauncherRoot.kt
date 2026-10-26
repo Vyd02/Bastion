@@ -819,7 +819,7 @@ private fun VaultOverlay(
     val list = remember(apps, s.vault) { apps.apps.filter { it.key in s.vault } }
     Box(
         Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xF0180B3A), Color(0xF5060410))))
+            .background(Brush.verticalGradient(listOf(Color(0xFF180B3A), Color(0xFF060410))))
             .clickable(remember { MutableInteractionSource() }, null) {},
     ) {
         AuroraBackground(Modifier.fillMaxSize().graphicsLayer { alpha = 0.6f })
@@ -877,7 +877,7 @@ private fun PrivateSpaceOverlay(
     val noScroll = remember { object : NestedScrollConnection {} }
     Box(
         Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xEE0B1A24), Color(0xF5050A0E))))
+            .background(Brush.verticalGradient(listOf(Color(0xFF0B1A24), Color(0xFF050A0E))))
             .clickable(remember { MutableInteractionSource() }, null) {},
     ) {
         AuroraBackground(Modifier.fillMaxSize().graphicsLayer { alpha = 0.45f })

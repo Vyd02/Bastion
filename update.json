@@ -1,5 +1,5 @@
 {
-  "version": "1.5",
+  "version": "1.6",
   "apk": "https://raw.githubusercontent.com/Vyd02/bastion/main/releases/Bastion.apk",
-  "notes": "Hold and drag apps onto your home screen and dock. Long-press no longer opens privacy."
+  "notes": "Private Space and Vault apps open again; solid backgrounds."
 }

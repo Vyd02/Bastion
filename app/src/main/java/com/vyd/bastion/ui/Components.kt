@@ -47,6 +47,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -159,7 +160,7 @@ fun AppIcon(
                     if (lp == null) {
                         pressed = false
                         val c = currentEvent.changes.firstOrNull { it.id == down.id }
-                        if (c != null && c.changedToUp()) {
+                        if (c != null && c.changedToUpIgnoreConsumed()) {
                             c.consume()
                             latestClick(coords[0]?.takeIf { it.isAttached }?.boundsInWindow()?.toAndroid())
                         }
