@@ -15,7 +15,7 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** Checks GitHub Releases for a newer APK and installs it through Android's package installer. */
+/** Checks update.json in the GitHub repo for a newer APK and installs it through Android's package installer. */
 object Updater {
     const val REPO = "Vyd02/Bastion"
 
@@ -46,20 +46,15 @@ object Updater {
         val local = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0"
         val result = withContext(Dispatchers.IO) {
             runCatching {
-                val c = URL("https://api.github.com/repos/$REPO/releases/latest").openConnection() as HttpURLConnection
-                c.setRequestProperty("Accept", "application/vnd.github+json")
+                val c = URL("https://raw.githubusercontent.com/$REPO/main/update.json?t=${System.currentTimeMillis()}")
+                    .openConnection() as HttpURLConnection
+                c.useCaches = false
                 c.connectTimeout = 8000; c.readTimeout = 8000
                 if (c.responseCode != 200) return@runCatching null
                 val j = JSONObject(c.inputStream.bufferedReader().readText())
-                val tag = j.getString("tag_name")
-                val assets = j.getJSONArray("assets")
-                var apk: String? = null
-                for (i in 0 until assets.length()) {
-                    val a = assets.getJSONObject(i)
-                    if (a.getString("name").endsWith(".apk")) { apk = a.getString("browser_download_url"); break }
-                }
-                if (apk != null && newer(tag, local)) State.Available(tag.removePrefix("v"), apk, j.optString("body"))
-                else null
+                val ver = j.getString("version")
+                val apk = j.getString("apk")
+                if (newer(ver, local)) State.Available(ver, apk, j.optString("notes")) else null
             }.getOrNull()
         }
         if (result != null) state.value = result
